@@ -13,6 +13,16 @@ from .services import emission
 from .utils.validators import extract_vin_from_text, normalize_fuel
 from .db import users_coll, vehicles_coll, gps_coll, emissions_coll
 
+
+
+
+from src.services.gps import router as gps_router
+from src.services.mode_predictor import router as mode_router
+
+
+
+
+
 app = FastAPI(title="Python VIN->CO2 Service")
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -130,3 +140,15 @@ async def calculate_daily(user_id: str, country_code: str = None, subregion: str
     }
     await emissions_coll.insert_one(record)
     return {"ok": True, "record": record}
+
+
+
+
+
+
+
+
+app.include_router(gps_router)
+app.include_router(mode_router)
+
+
