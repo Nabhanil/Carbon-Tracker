@@ -51,7 +51,7 @@ def load_grid_factors():
     # return consistent columns
     return df[["country_code", "subregion", "grid_co2_kg_per_kwh"]]
 
-def load_fuel_factors():
+# def load_fuel_factors():
     """
     Loads fuel_emission_factors_worldwide.xlsx
     Expected minimal columns: fuel_type, kg_co2_per_unit (or numeric convertible)
@@ -75,6 +75,52 @@ def load_fuel_factors():
 
     # Note: kg_co2_per_unit may be NaN for 'ELECTRIC' (we use grid factor instead)
     return df[["fuel_type", "unit", "kg_co2_per_unit"]]
+
+
+def load_fuel_factors():
+    """
+    Loads fuel_emission_factors_worldwide.xlsx
+    Accepts either 'kg_co2_per_unit' OR 'co2_kg_per_unit' (common variants).
+    Returns DataFrame with columns: ['fuel_type', 'unit', 'kg_co2_per_unit']
+    """
+    df = _read_xlsx("fuel_emission_factors_worldwide.xlsx")
+    df.rename(columns={c: c.strip() for c in df.columns}, inplace=True)
+
+    if "fuel_type" not in df.columns:
+        raise KeyError("fuel_emission_factors_worldwide.xlsx must include 'fuel_type' column.")
+
+    # optional columns
+    if "unit" not in df.columns:
+        df["unit"] = ""
+    if "source" not in df.columns:
+        df["source"] = ""
+
+    # Accept several possible CO2 column names
+    # prefer 'kg_co2_per_unit', fallback to 'co2_kg_per_unit'
+    if "kg_co2_per_unit" in df.columns:
+        co2_col = "kg_co2_per_unit"
+    elif "co2_kg_per_unit" in df.columns:
+        co2_col = "co2_kg_per_unit"
+    else:
+        # If they used a different name (e.g. 'co2_per_unit'), try that too
+        possible = [c for c in df.columns if "co2" in c.lower() and "unit" in c.lower()]
+        co2_col = possible[0] if possible else None
+
+    if not co2_col:
+        raise KeyError("fuel_emission_factors_worldwide.xlsx must include a CO2-per-unit column (e.g. 'kg_co2_per_unit' or 'co2_kg_per_unit').")
+
+    # Normalize columns to 'kg_co2_per_unit'
+    df["fuel_type"] = df["fuel_type"].astype(str).str.upper().str.strip()
+    df["unit"] = df["unit"].astype(str).fillna("").str.strip()
+    df["kg_co2_per_unit"] = pd.to_numeric(df.get(co2_col), errors="coerce")
+
+    # return canonical columns
+    return df[["fuel_type", "unit", "kg_co2_per_unit"]]
+
+
+
+
+
 
 def load_category_consumption():
     """

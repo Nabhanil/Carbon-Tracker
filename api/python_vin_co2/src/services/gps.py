@@ -406,4 +406,4 @@ async def gps_update(payload: GpsUpdate):
         "_id": str(doc["_id"])
     }}
 
-# ... rest of file unchanged (daily-modes endpoints) ...
+
