@@ -6,6 +6,7 @@ import { GoogleGenAI } from "@google/genai";
 import { readFile } from 'node:fs/promises';
 import { PDFParse } from 'pdf-parse';
 
+import LPGRecord from "./models/lpgSchema.js";
 import cors from "cors";
 import BillModel from "./models/billSchema.js";
 
@@ -37,8 +38,12 @@ const calcCarbon = (units: any) => (units * 0.82).toFixed(2);
 // 📍 Upload Route
 app.post("/upload-bill", upload.single("bill"), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    const { userId } = req.body;
 
+    if (!userId) {
+      return res.status(400).json({ error: "userId is required" });
+    }
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     let extractedText = "";
     if (req.file.mimetype === "application/pdf") {
       const dataBuffer = req.file.buffer;
@@ -112,6 +117,7 @@ ${extractedText}`,
 
     // Save to MongoDB
     const newBill = new BillModel({
+      userId,
       fileName: req.file.originalname,
       fileType: req.file.mimetype,
       billData: req.file.buffer,
@@ -198,5 +204,130 @@ mongoose
     );
   })
   .catch((e) => console.error("DB connection failed:", e));
+
+// 📍 Fetch LPG details + usage + carbon emissions
+
+// 📍 Fetch LPG info + calculate emissions + save to DB
+app.post("/fetch-lpg", async (req, res) => {
+  try {
+    const { lpgText, userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: "userId is required" });
+    }
+    if (!lpgText || typeof lpgText !== "string") {
+      return res.status(400).json({ error: "lpgText is required as a string" });
+    }
+
+    const prompt = `
+You are an LPG extraction engine.
+
+Return STRICT JSON ONLY:
+{
+  "consumerNumber": "",
+  "provider": "",
+  "state": "",
+  "district": "",
+  "month": "",
+  "connectionType": "",
+  "subsidyStatus": "",
+  "cylindersConsumed": 0,
+  "lpgInKg": 0,
+  "notes": ""
+}
+
+Rules:
+- No explanation text.
+- If unknown, return empty or 0.
+INPUT: "${lpgText}"
+`;
+
+    const aiResponse = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+    });
+
+    const raw = aiResponse.text?.trim() || "";
+    const clean = raw.replace(/```json|```/g, "").trim();
+
+    let json: any = {};
+    try {
+      json = JSON.parse(clean);
+    } catch (e) {
+      return res.status(500).json({ error: "AI returned invalid JSON", raw });
+    }
+
+    // 🌱 Carbon Calculation
+    const EMISSION_PER_CYL = 44.2;
+    const EMISSION_PER_KG = 3.1;
+
+    let carbon = 0;
+    if (json.cylindersConsumed > 0) carbon = json.cylindersConsumed * EMISSION_PER_CYL;
+    else if (json.lpgInKg > 0) carbon = json.lpgInKg * EMISSION_PER_KG;
+
+    json.carbonEmitted = Number(carbon.toFixed(2));
+
+    // 🌱 Save to MongoDB
+    const newRecord = new LPGRecord({
+      userId,
+      ...json
+    });
+
+    await newRecord.save();
+
+    return res.json({
+      success: true,
+      message: "LPG data extracted & stored successfully.",
+      data: json
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to process LPG details" });
+  }
+});
+
+
+
+// 📍 Calculate LPG Emissions (no AI)
+app.post("/calculate-lpg-emissions", async (req, res) => {
+  try {
+    const { cylindersConsumed = 0, lpgInKg = 0 } = req.body;
+
+    if (cylindersConsumed <= 0 && lpgInKg <= 0) {
+      return res.status(400).json({
+        error: "Provide either cylindersConsumed or lpgInKg (must be > 0)"
+      });
+    }
+
+    // Emission factors
+    const EMISSION_PER_CYLINDER = 44.2; // kg CO₂
+    const EMISSION_PER_KG = 3.1;        // kg CO₂
+
+    let carbonEmitted = 0;
+
+    if (cylindersConsumed > 0) {
+      carbonEmitted += cylindersConsumed * EMISSION_PER_CYLINDER;
+    }
+
+    if (lpgInKg > 0) {
+      carbonEmitted += lpgInKg * EMISSION_PER_KG;
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        cylindersConsumed,
+        lpgInKg,
+        carbonEmitted: Number(carbonEmitted.toFixed(2))
+      }
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to calculate LPG emissions" });
+  }
+});
+
 
 export default app;

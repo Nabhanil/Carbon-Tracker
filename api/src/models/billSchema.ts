@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 
 const billSchema = new mongoose.Schema({
   fileName: String,
+  userId: String,
   fileType: String,
   billData: Buffer,
   extracted: {
